@@ -1,0 +1,16 @@
+cert-manager:
+  crds:
+    enabled: true
+    keep: true
+
+trust-manager:
+  enabled: true
+  app:
+    webhook:
+      tls:
+        helmCert:
+          enabled: true
+  secretTargets:
+    enabled: true
+    authorizedSecrets:
+      - mesh-ca-public

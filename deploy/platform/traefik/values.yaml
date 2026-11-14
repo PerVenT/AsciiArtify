@@ -1,0 +1,33 @@
+global:
+  baseDomain: ""
+  clusterIssuer: ""
+  autheliaNamespace: authelia
+  caSecret: mesh-ca-public
+
+forwardAuth:
+  enabled: true
+
+traefik:
+  fullnameOverride: traefik
+  accessLog:
+    enabled: true
+
+  ports:
+    web:
+      http:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+    websecure:
+      http:
+        middlewares:
+          - traefik-authelia-forward-auth@kubernetescrd
+
+  providers:
+    kubernetesCRD:
+      enabled: true
+      allowCrossNamespace: true
+    kubernetesIngress:
+      enabled: true

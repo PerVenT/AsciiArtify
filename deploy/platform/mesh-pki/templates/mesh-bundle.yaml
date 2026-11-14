@@ -1,0 +1,21 @@
+{{- if and .Values.meshCA.enabled .Values.bundle.enabled }}
+{{- $caSecret := required "global.caSecret is required" .Values.global.caSecret }}
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ $caSecret }}
+spec:
+  sources:
+    - secret:
+        name: mesh-ca
+        key: tls.crt
+  target:
+    secret:
+      key: tls.ca
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            {{- toYaml .Values.bundle.targetNamespaces | nindent 12 }}
+{{- end }}

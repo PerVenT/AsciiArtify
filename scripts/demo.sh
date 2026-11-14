@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Демонстрація: розгортання «Hello World» у namespace dev поточного кластера
+# Демонстрація: розгортання «whoami» у namespace dev поточного кластера
 # Використання: ./scripts/demo.sh <minikube|kind|k3s> [deploy|delete]
 # shellcheck source=scripts/common.sh
 source "$(dirname "$0")/common.sh"
@@ -12,42 +12,43 @@ case "${1:-}" in
 esac
 ACTION="${2:-deploy}"
 LOCAL_PORT="${LOCAL_PORT:-8088}"
-K="kubectl --context $CONTEXT -n $NAMESPACE"
+# -n передаємо лише якщо NAMESPACE задано явно; інакше kubectl бере namespace поточного контексту
+K="kubectl --context $CONTEXT${NAMESPACE:+ -n $NAMESPACE}"
 
 ensure_tool kubectl
 kubectl config get-contexts "$CONTEXT" >/dev/null 2>&1 || die "Контекст '$CONTEXT' не знайдено — спершу 'make $1'"
 
 if [[ "$ACTION" == delete ]]; then
-  $K delete deployment,service hello-world --ignore-not-found
+  $K delete deployment,service whoami --ignore-not-found
   exit 0
 fi
 
-log "Розгортаю hello-world у $CONTEXT / namespace $NAMESPACE"
+TARGET_NS="${NAMESPACE:-$(kubectl --context "$CONTEXT" config view --minify -o jsonpath='{..namespace}' 2>/dev/null)}"
+log "Розгортаю whoami у $CONTEXT / namespace ${TARGET_NS:-default}"
 $K apply -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hello-world
-  labels: { app: hello-world }
+  name: whoami
+  labels: { app: whoami }
 spec:
   replicas: 3
   selector:
-    matchLabels: { app: hello-world }
+    matchLabels: { app: whoami }
   template:
     metadata:
-      labels: { app: hello-world }
+      labels: { app: whoami }
     spec:
-      # розносимо репліки по різних нодах, щоб побачити роботу мультинодового кластера
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
-            matchLabels: { app: hello-world }
+            matchLabels: { app: whoami }
       containers:
-        - name: hello
-          image: hashicorp/http-echo:1.0
-          args: ["-listen=:5678", "-text=Hello World from AsciiArtify!"]
+        - name: whoami
+          image: traefik/whoami:v1.12.0
+          args: ["--port=5678"]
           ports: [{ containerPort: 5678 }]
           resources:
             requests: { cpu: 10m, memory: 16Mi }
@@ -58,24 +59,25 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: hello-world
+  name: whoami
 spec:
-  selector: { app: hello-world }
+  selector: { app: whoami }
   ports:
     - port: 80
       targetPort: 5678
 EOF
 
-$K rollout status deployment/hello-world --timeout=180s
-$K get pods -l app=hello-world -o wide
+$K rollout status deployment/whoami --timeout=180s
+$K get pods -l app=whoami -o wide
 
-log "Port-forward localhost:${LOCAL_PORT} → svc/hello-world:80"
-$K port-forward svc/hello-world "${LOCAL_PORT}:80" >/dev/null 2>&1 &
+log "Port-forward localhost:${LOCAL_PORT} → svc/whoami:80"
+$K port-forward svc/whoami "${LOCAL_PORT}:80" >/dev/null 2>&1 &
 PF_PID=$!
 trap 'kill $PF_PID 2>/dev/null || true' EXIT
 
 for _ in $(seq 1 20); do
-  if resp="$(curl -fsS "http://localhost:${LOCAL_PORT}" 2>/dev/null)"; then
+  # перший рядок відповіді whoami: «Hostname: <под>» (sed, а не head — щоб curl не ловив SIGPIPE під pipefail)
+  if resp="$(curl -fsS "http://localhost:${LOCAL_PORT}" 2>/dev/null | sed -n 1p)" && [[ -n "$resp" ]]; then
     ok "Відповідь сервісу: $resp"
     exit 0
   fi

@@ -1,0 +1,83 @@
+global:
+  baseDomain: ""
+  internalClusterIssuer: ""
+
+authelia:
+  pod:
+    kind: Deployment
+    replicas: 1
+    probes:
+      method:
+        httpGet:
+          path: /api/health
+          port: http
+          scheme: HTTPS
+
+  service:
+    type: ClusterIP
+    port: 9091
+
+  secret:
+    existingSecret: authelia-secrets
+    additionalSecrets:
+      authelia-internal-tls:
+        path: tls
+      authelia-users:
+        path: users
+      authelia-server-tls:
+        path: extra-config
+      authelia-oidc:
+        path: oidc
+
+  configMap:
+    theme: auto
+    extraConfigs:
+      - /secrets/extra-config/server-tls.yml
+
+    ntp:
+      disable_failure: true
+
+    authentication_backend:
+      file:
+        enabled: true
+        path: /secrets/users/users_database.yml
+
+    storage:
+      local:
+        enabled: true
+        path: /config/db.sqlite3
+
+    notifier:
+      filesystem:
+        enabled: true
+        filename: /config/notification.txt
+
+    session:
+      name: authelia_session
+      same_site: lax
+      inactivity: 1h
+      expiration: 8h
+      remember_me: 1M
+
+    access_control:
+      default_policy: deny
+
+    identity_providers:
+      oidc:
+        enabled: true
+        jwks:
+          - key_id: main
+            algorithm: RS256
+            use: sig
+            key:
+              path: /secrets/oidc/jwks.pem
+        claims_policies:
+          argocd:
+            id_token:
+              - preferred_username
+              - groups
+              - email
+              - name
+
+  ingress:
+    enabled: false

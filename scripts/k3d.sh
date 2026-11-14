@@ -28,17 +28,26 @@ up() {
 
   local agents=$(( NODES - 1 ))
   log "Створюю k3d-кластер '$K3D_CLUSTER' (1 server + $agents agents, рушій $ENGINE)"
+  # Rootless Podman: kubelet не може писати в /proc/sys/{vm/overcommit_memory,kernel/panic}
+  # і падає ("Failed to start ContainerManager") → вмикаємо KubeletInUserNamespace
+  local extra=()
+  if [[ "$ENGINE" == podman ]]; then
+    extra+=(--k3s-arg "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@all")
+  fi
   # --servers-memory/--agents-memory — нативний ліміт RAM у k3d;
   # ліміт CPU k3d не підтримує → застосовуємо після створення через '$ENGINE update'
   k3d cluster create "$K3D_CLUSTER" \
+    ${extra[@]+"${extra[@]}"} \
     --servers 1 \
     --agents "$agents" \
     --servers-memory "${NODE_MEMORY_MB}m" \
     --agents-memory "${NODE_MEMORY_MB}m" \
-    --port "8080:80@loadbalancer" \
+    --port "80:80@loadbalancer" \
+    --port "443:443@loadbalancer" \
     --kubeconfig-update-default \
     --kubeconfig-switch-context \
-    --wait
+    --wait \
+    --k3s-arg "--disable=traefik@server:*"
 
   # shellcheck disable=SC2046  # імена нод без пробілів; без mapfile — сумісно з bash 3.2 (macOS)
   limit_node_containers $(k3d node list | awk -v c="$K3D_CLUSTER" 'NR>1 && $3==c && ($2=="server" || $2=="agent") {print $1}')
@@ -47,7 +56,7 @@ up() {
   wait_nodes_ready
   set_default_namespace
   show_summary "k3d-${K3D_CLUSTER}-"
-  echo "Ingress (Traefik) доступний на http://localhost:8080"
+  echo "Ingress (Traefik) доступний на http://localhost:80"
 }
 
 down()   { ensure_tool k3d; use_podman_socket; k3d cluster delete "$K3D_CLUSTER"; }

@@ -1,0 +1,27 @@
+{{- $domain := required "global.baseDomain is required" .Values.global.baseDomain }}
+{{- $issuer := required "global.clusterIssuer is required" .Values.global.clusterIssuer }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: traefik-wildcard-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: traefik-wildcard-tls
+  duration: 8760h
+  renewBefore: 720h
+  issuerRef:
+    name: {{ $issuer | quote }}
+    kind: ClusterIssuer
+  commonName: {{ printf "*.%s" $domain | quote }}
+  dnsNames:
+    - {{ printf "*.%s" $domain | quote }}
+    - {{ $domain | quote }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ .Release.Namespace }}
+spec:
+  defaultCertificate:
+    secretName: traefik-wildcard-tls

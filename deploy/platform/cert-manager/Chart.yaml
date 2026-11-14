@@ -1,0 +1,13 @@
+apiVersion: v2
+name: platform-cert-manager
+description: Wrapper chart for cert-manager and trust-manager
+version: 0.1.0
+type: application
+dependencies:
+  - name: cert-manager
+    version: v1.21.3
+    repository: https://charts.jetstack.io
+  - name: trust-manager
+    version: v0.26.0
+    repository: https://charts.jetstack.io
+    condition: trust-manager.enabled

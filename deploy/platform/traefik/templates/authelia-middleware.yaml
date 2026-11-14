@@ -1,0 +1,22 @@
+{{- if .Values.forwardAuth.enabled }}
+{{- $autheliaNs := required "global.autheliaNamespace is required" .Values.global.autheliaNamespace }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authelia-forward-auth
+  namespace: {{ .Release.Namespace }}
+spec:
+  forwardAuth:
+    address: {{ printf "https://authelia.%s.svc.cluster.local:9091/api/authz/forward-auth" $autheliaNs | quote }}
+    trustForwardHeader: true
+    authResponseHeaders:
+      - Remote-User
+      - Remote-Groups
+      - Remote-Name
+      - Remote-Email
+    {{- if .Values.global.caSecret }}
+    tls:
+      caSecret: {{ .Values.global.caSecret | quote }}
+    {{- end }}
+    maxResponseBodySize: 2097152
+{{- end }}

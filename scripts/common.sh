@@ -5,14 +5,15 @@
 set -euo pipefail
 
 # ---------- Параметри (можна перевизначити через змінні оточення або make VAR=...) ----------
-CLUSTER_NAME="${CLUSTER_NAME:-asciiartify}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLUSTER_NAME="${CLUSTER_NAME:-$(basename "$ROOT_DIR" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')}"
 NODES="${NODES:-3}"                 # загальна кількість нод (1 control-plane + N-1 workers)
 NODE_CPUS="${NODE_CPUS:-2}"         # ядер на ноду
 NODE_MEMORY_MB="${NODE_MEMORY_MB:-2048}"  # RAM на ноду, МБ
-NAMESPACE="${NAMESPACE:-dev}"       # namespace за замовчуванням
-ENGINE="${ENGINE:-docker}"          # docker | podman
+NAMESPACE="${NAMESPACE:-}"          # порожньо = не задано: при створенні кластера → DEFAULT_NAMESPACE, у demo → поточний namespace контексту
+DEFAULT_NAMESPACE="dev"             # default namespace для щойно створеного кластера
+ENGINE="${ENGINE:-}"                # docker | podman; порожньо = автовизначення (див. detect_engine)
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="${BIN_DIR:-$ROOT_DIR/bin}"
 export PATH="$BIN_DIR:$PATH"
 
@@ -22,6 +23,34 @@ log()  { printf '%s==>%s %s\n' "$c_info" "$c_off" "$*"; }
 ok()   { printf '%s ✔ %s %s\n' "$c_ok" "$c_off" "$*"; }
 warn() { printf '%s ! %s %s\n' "$c_warn" "$c_off" "$*" >&2; }
 die()  { printf '%s ✖ %s %s\n' "$c_err" "$c_off" "$*" >&2; exit 1; }
+
+# ---------- Автовизначення контейнерного рушія ----------
+# Пріоритет: локальний Docker → Podman. Docker вважається доступним, лише якщо його активний
+# endpoint локальний (unix://) і daemon відповідає: віддалений docker context (ssh://, tcp://)
+# ігноруємо, щоб кластери випадково не створювалися на іншому сервері.
+# Явний ENGINE=docker|podman завжди має пріоритет.
+docker_is_local() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local host
+  host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  [[ -z "$host" || "$host" == unix://* ]] || return 1
+  docker info >/dev/null 2>&1
+}
+
+detect_engine() {
+  if docker_is_local; then
+    ENGINE=docker
+  elif command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+    command -v docker >/dev/null 2>&1 && warn "Локального Docker немає (docker вказує на віддалений context) → використовую podman"
+  elif command -v docker >/dev/null 2>&1; then
+    die "Docker вказує на віддалений context, а podman не встановлено. Якщо справді потрібен цей Docker — вкажіть ENGINE=docker явно"
+  else
+    die "Не знайдено ні локального docker, ні podman"
+  fi
+  log "Автовизначено рушій: $ENGINE"
+}
+[[ -n "$ENGINE" ]] || detect_engine
 
 # ---------- Платформа ----------
 detect_platform() {
@@ -43,6 +72,28 @@ install_tool() {
   chmod +x "$BIN_DIR/$name"
 }
 
+# Helm поставляється архівом (бінарник у <os>-<arch>/helm), тому install_tool не підходить.
+# Версія: HELM_VERSION=vX.Y.Z або остання. Контрольну суму звіряємо з get.helm.sh.
+install_helm() {
+  local v="${HELM_VERSION:-}" file tmp
+  [[ -n "$v" ]] || v="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/helm/helm/releases/latest | sed 's#.*/tag/##')"
+  file="helm-${v}-${OS}-${ARCH}.tar.gz"
+  tmp="$(mktemp -d)"
+  log "Встановлюю helm ${v} → $BIN_DIR/helm"
+  curl -fsSL -o "$tmp/$file" "https://get.helm.sh/$file" || die "Не вдалося завантажити $file"
+  curl -fsSL -o "$tmp/$file.sha256sum" "https://get.helm.sh/$file.sha256sum" || die "Не вдалося завантажити контрольну суму"
+  # sha256sum є в Linux; на macOS його немає → shasum -a 256
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$tmp" && sha256sum -c "$file.sha256sum" >/dev/null) || die "Контрольна сума $file не збігається"
+  else
+    (cd "$tmp" && shasum -a 256 -c "$file.sha256sum" >/dev/null) || die "Контрольна сума $file не збігається"
+  fi
+  tar -xzf "$tmp/$file" -C "$tmp"
+  mkdir -p "$BIN_DIR"
+  install -m 0755 "$tmp/${OS}-${ARCH}/helm" "$BIN_DIR/helm"
+  rm -rf "$tmp"
+}
+
 ensure_tool() {
   local name="$1"
   command -v "$name" >/dev/null 2>&1 && return 0
@@ -59,6 +110,8 @@ ensure_tool() {
     k3d)
       local v; v="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/k3d-io/k3d/releases/latest | sed 's#.*/tag/##')"
       install_tool k3d "https://github.com/k3d-io/k3d/releases/download/${v}/k3d-${OS}-${ARCH}" ;;
+    helm)
+      install_helm ;;
     *) die "Не знаю, як встановити '$name'" ;;
   esac
 }
@@ -109,9 +162,10 @@ wait_nodes_ready() {
 # Жоден із трьох інструментів не дозволяє задати default namespace при створенні кластера,
 # тому створюємо його та прописуємо в контекст kubeconfig.
 set_default_namespace() {
-  kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl config set-context --current --namespace="$NAMESPACE" >/dev/null
-  ok "Namespace '$NAMESPACE' створено та встановлено за замовчуванням для контексту $(kubectl config current-context)"
+  local ns="${NAMESPACE:-$DEFAULT_NAMESPACE}"
+  kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl config set-context --current --namespace="$ns" >/dev/null
+  ok "Namespace '$ns' створено та встановлено за замовчуванням для контексту $(kubectl config current-context)"
 }
 
 show_summary() {
@@ -125,5 +179,5 @@ show_summary() {
       | awk '{ split($2,a,"="); split($3,b,"="); printf "  %-40s CPU=%s  RAM=%s MB\n", $1, a[2]/1e9, b[2]/1024/1024 }'
   done
   echo
-  ok "Готово. Перевірка: kubectl get pods  (namespace: $NAMESPACE)"
+  ok "Готово. Перевірка: kubectl get pods  (namespace: ${NAMESPACE:-$DEFAULT_NAMESPACE})"
 }

@@ -1,0 +1,14 @@
+global:
+  internalClusterIssuer: ""
+  caSecret: mesh-ca-public
+
+meshCA:
+  enabled: true
+  namespace: cert-manager
+
+bundle:
+  enabled: true
+  targetNamespaces:
+    - traefik
+    - authelia
+    - argocd

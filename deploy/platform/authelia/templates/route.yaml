@@ -1,0 +1,51 @@
+{{- $domain := required "global.baseDomain is required" .Values.global.baseDomain }}
+{{- $issuer := required "global.internalClusterIssuer is required" .Values.global.internalClusterIssuer }}
+{{- $ns := .Release.Namespace }}
+{{- $host := printf "auth.%s" $domain }}
+{{- $svc := .Release.Name }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: authelia-internal-tls
+  namespace: {{ $ns }}
+spec:
+  secretName: authelia-internal-tls
+  duration: 8760h
+  renewBefore: 720h
+  issuerRef:
+    name: {{ $issuer | quote }}
+    kind: ClusterIssuer
+  commonName: {{ printf "%s.%s.svc.cluster.local" $svc $ns | quote }}
+  dnsNames:
+    - {{ $svc | quote }}
+    - {{ printf "%s.%s" $svc $ns | quote }}
+    - {{ printf "%s.%s.svc" $svc $ns | quote }}
+    - {{ printf "%s.%s.svc.cluster.local" $svc $ns | quote }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: authelia-transport
+  namespace: {{ $ns }}
+spec:
+  serverName: {{ printf "%s.%s.svc.cluster.local" $svc $ns | quote }}
+  rootCAs:
+    - secret: authelia-internal-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authelia
+  namespace: {{ $ns }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: {{ printf "Host(`%s`)" $host | quote }}
+      kind: Rule
+      services:
+        - name: {{ $svc }}
+          port: 9091
+          scheme: https
+          serversTransport: authelia-transport
+  tls: {}

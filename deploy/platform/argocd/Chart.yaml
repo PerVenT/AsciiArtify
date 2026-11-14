@@ -1,0 +1,9 @@
+apiVersion: v2
+name: platform-argocd
+description: Wrapper chart for ArgoCD with internal TLS and IngressRoute
+version: 0.1.0
+type: application
+dependencies:
+  - name: argo-cd
+    version: "10.10.3"
+    repository: https://argoproj.github.io/argo-helm

@@ -1,0 +1,69 @@
+# Зовнішній dev-контур через ArgoCD (приклад 1:1 зі staging/prod; замініть домен під ваш dev-стенд)
+global:
+  baseDomain: dev.example.com
+  clusterIssuer: letsencrypt-staging
+  internalClusterIssuer: mesh
+  autheliaNamespace: authelia
+  argocdNamespace: argocd
+  caSecret: mesh-ca-public
+
+meshCA:
+  enabled: true
+
+bundle:
+  enabled: true
+
+authelia:
+  configMap:
+    session:
+      cookies:
+        - domain: dev.example.com
+          subdomain: auth
+          default_redirection_url: https://app.dev.example.com
+    access_control:
+      rules:
+        - domain: auth.dev.example.com
+          policy: bypass
+        - domain: "*.dev.example.com"
+          policy: one_factor
+    identity_providers:
+      oidc:
+        clients:
+          - client_name: ArgoCD
+            client_id: argocd
+            client_secret:
+              path: /secrets/oidc/argocd_client_secret_hash
+            public: false
+            authorization_policy: one_factor
+            consent_mode: implicit
+            require_pkce: false
+            claims_policy: argocd
+            redirect_uris:
+              - https://argocd.dev.example.com/auth/callback
+            scopes:
+              - openid
+              - profile
+              - email
+              - groups
+            grant_types:
+              - authorization_code
+            response_types:
+              - code
+            token_endpoint_auth_method: client_secret_basic
+
+argo-cd:
+  global:
+    domain: argocd.dev.example.com
+  configs:
+    cm:
+      url: https://argocd.dev.example.com
+      oidc.config: |
+        name: Authelia
+        issuer: https://auth.dev.example.com
+        clientID: argocd
+        clientSecret: $oidc.argocd.clientSecret
+        requestedScopes:
+          - openid
+          - profile
+          - email
+          - groups

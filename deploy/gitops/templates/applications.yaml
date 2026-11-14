@@ -1,0 +1,36 @@
+{{- $repoURL := required "repoURL is required" .Values.repoURL }}
+{{- $env := required "env is required" .Values.env }}
+{{- range .Values.apps }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ printf "%s-%s" $env .name }}
+  namespace: {{ $.Values.argocdNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+spec:
+  project: default
+  sources:
+    - repoURL: {{ $repoURL | quote }}
+      targetRevision: {{ $.Values.targetRevision | quote }}
+      path: {{ .path | quote }}
+      helm:
+        releaseName: {{ .name }}
+        valueFiles:
+          - values.yaml
+          - {{ printf "$values/deploy/envs/%s.yaml" $env }}
+    - repoURL: {{ $repoURL | quote }}
+      targetRevision: {{ $.Values.targetRevision | quote }}
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+{{- end }}

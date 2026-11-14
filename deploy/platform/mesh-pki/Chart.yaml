@@ -1,0 +1,5 @@
+apiVersion: v2
+name: platform-mesh-pki
+description: Internal mesh ClusterIssuer and trust-manager CA Bundle
+version: 0.1.0
+type: application

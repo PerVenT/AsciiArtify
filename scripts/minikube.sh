@@ -33,7 +33,24 @@ up() {
   echo "Dashboard: minikube dashboard -p $PROFILE"
 }
 
-down()   { ensure_tool minikube; minikube delete --profile "$PROFILE"; }
+# Профіль існує? '--light' не опитує контейнерний рушій. Результат у змінну (не pipe в 'grep -q'),
+# щоб під pipefail не отримати хибний SIGPIPE.
+profile_exists() {
+  local out
+  out="$(minikube profile list --light -o json 2>/dev/null || true)"
+  [[ "$out" =~ \"Name\"\ *:\ *\"${PROFILE}\" ]]
+}
+
+# 'minikube delete' для неіснуючого профілю все одно шукає рештки в доступних рушіях
+# (зокрема у віддаленому docker context) → викликаємо його лише якщо профіль є
+down() {
+  ensure_tool minikube
+  if profile_exists; then
+    minikube delete --profile "$PROFILE"
+  else
+    log "minikube-профіль '$PROFILE' не існує — нічого видаляти"
+  fi
+}
 status() { ensure_tool minikube; minikube status --profile "$PROFILE" || true; kubectl --context "$PROFILE" get nodes -o wide 2>/dev/null || true; }
 
 case "${1:-up}" in

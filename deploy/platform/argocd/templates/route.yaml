@@ -1,0 +1,47 @@
+{{- $domain := required "global.baseDomain is required" .Values.global.baseDomain }}
+{{- $issuer := required "global.internalClusterIssuer is required" .Values.global.internalClusterIssuer }}
+{{- $ns := .Release.Namespace }}
+{{- $host := printf "argocd.%s" $domain }}
+{{- $svc := "argocd-server" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-server
+  namespace: {{ $ns }}
+spec:
+  secretName: argocd-server-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ $issuer | quote }}
+  dnsNames:
+    - {{ $host | quote }}
+    - {{ printf "%s.%s.svc" $svc $ns | quote }}
+    - {{ printf "%s.%s.svc.cluster.local" $svc $ns | quote }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: argocd
+  namespace: {{ $ns }}
+spec:
+  serverName: {{ printf "%s.%s.svc" $svc $ns | quote }}
+  rootCAs:
+    - secret: argocd-server-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd
+  namespace: {{ $ns }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: {{ printf "Host(`%s`)" $host | quote }}
+      kind: Rule
+      services:
+        - name: {{ $svc }}
+          port: 443
+          scheme: https
+          serversTransport: argocd
+  tls: {}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: platform-authelia
+description: Wrapper chart for Authelia with internal TLS and IngressRoute
+version: 0.1.0
+type: application
+dependencies:
+  - name: authelia
+    version: "0.11.22"
+    repository: https://charts.authelia.com

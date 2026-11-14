@@ -13,6 +13,7 @@ AsciiArtify зберігає код у GitHub і планує розгортат
 схожий на «справжній» Kubernetes. Розглянуто три інструменти:
 
 [![Watch the video](https://img.youtube.com/vi/T-D1KVIuvjA/maxresdefault.jpg)](https://youtu.be/T-D1KVIuvjA)
+[![asciicast](https://asciinema.org/a/GZdeF4rmL3J3lYqU.png)](https://asciinema.org/a/GZdeF4rmL3J3lYqU)
 
 | Інструмент | Що це | Хто розвиває | Ліцензія |
 |---|---|---|---|
@@ -137,18 +138,20 @@ AsciiArtify зберігає код у GitHub і планує розгортат
 make help            # список команд
 make minikube        # minikube, driver docker, 3 ноди
 make kind            # kind: 1 control-plane + 2 workers
-make k3s             # k3d (k3s у Docker): 1 server + 2 agents   (alias: make k3d)
+make k3d             # k3d (k3s у Docker): 1 server + 2 agents
 
-make demo-k3s        # Hello World у кластері (demo-minikube | demo-kind | demo-k3s)
+make demo-k3d        # whoami у кластері (demo-minikube | demo-kind | demo-k3d)
+make dev-local       # локальне середовище без ArgoCD (cert-manager, traefik, authelia, demo)
+make dev-gitops      # зовнішній dev-контур з ArgoCD
 make status          # стан усіх кластерів
 make delete-kind     # видалити один кластер
 make clean           # видалити всі
-make lint            # bash -n + shellcheck
+make lint            # helm lint + bash -n + shellcheck
 ```
 
 Перевизначення параметрів: `make kind NODES=3 NODE_CPUS=2 NODE_MEMORY_MB=2048 NAMESPACE=dev ENGINE=podman`.
 
-Відсутні `kubectl`, `kind`, `k3d`, `minikube` автоматично завантажуються в `./bin` (вимкнути: `AUTO_INSTALL=0`).
+Відсутні `kubectl`, `helm`, `kind`, `k3d`, `minikube` автоматично завантажуються в `./bin` (вимкнути: `AUTO_INSTALL=0`).
 
 ### Вимоги до хоста
 - Docker Engine/Desktop або Podman, `make`, `curl`, `bash` (Linux, macOS; Windows — через WSL2).
@@ -177,24 +180,31 @@ kubectl config set-context --current --namespace=dev
 ```
 .
 ├── Makefile
-├── README.md
+├── index.md
+├── deploy/
+│   ├── demo/                  # Helm-чарт демо-сервісу whoami
+│   ├── envs/                  # значення середовищ (dev-local, dev-gitops, staging, prod)
+│   ├── gitops/                # ArgoCD Application-маніфести
+│   └── platform/              # wrapper Helm-чарти (cert-manager, mesh-pki, traefik, authelia, argocd)
 └── scripts/
-    ├── common.sh     # параметри, preflight, встановлення утиліт, ліміти, namespace
-    ├── minikube.sh   # up | down | status
-    ├── kind.sh       # up | down | status
-    ├── k3s.sh        # up | down | status   (k3d)
-    └── demo.sh       # Hello World: deploy | delete
+    ├── common.sh              # параметри, preflight, встановлення утиліт, ліміти, namespace
+    ├── minikube.sh            # up | down | status
+    ├── kind.sh                # up | down | status
+    ├── k3d.sh                 # up | down | status
+    ├── demo.sh                # whoami: deploy | delete
+    ├── authelia-secrets.sh    # генерація локальних секретів Authelia та OIDC
+    └── render-argocd-oidc.sh  # локальний OIDC-конфіг (hostAliases + rootCA) для ArgoCD
 ```
 
 ---
 
-## 6. Демонстрація: k3d + «Hello World»
+## 6. Демонстрація: k3d + «whoami»
 
-Рекомендований для PoC інструмент — **k3d** (обґрунтування у розділі 7).
+Рекомендований для PoC інструмент — **k3d** (обґрунтування у розділі 7). У `scripts/k3d.sh` вбудований Traefik у k3s вимкнено (`--disable=traefik@server:*`) і прокинуто порти `80`/`443` на `@loadbalancer`, щоб Ingress-контролер ставився явно через Helm.
 
 ### Крок 1. Створити кластер
 ```bash
-$ make k3s
+$ make k3d
 ==> Рушій: docker | хост: 8 CPU, 15890 MB | потрібно: 3×2 CPU, 3×2048 MB
 ==> Створюю k3d-кластер 'asciiartify-k3d' (1 server + 2 agents, рушій docker)
 ...
@@ -216,34 +226,34 @@ $ kubectl config view --minify -o jsonpath='{..namespace}'
 dev
 ```
 
-### Крок 3. Розгорнути Hello World
+### Крок 3. Розгорнути демо-сервіс (whoami)
 ```bash
-$ make demo-k3s
-==> Розгортаю hello-world у k3d-asciiartify-k3d / namespace dev
-deployment.apps/hello-world created
-service/hello-world created
-deployment "hello-world" successfully rolled out
-NAME                          READY   STATUS    NODE
-hello-world-xxxxxxxxxx-aaaaa  1/1     Running   k3d-asciiartify-k3d-server-0
-hello-world-xxxxxxxxxx-bbbbb  1/1     Running   k3d-asciiartify-k3d-agent-0
-hello-world-xxxxxxxxxx-ccccc  1/1     Running   k3d-asciiartify-k3d-agent-1
-==> Port-forward localhost:8088 → svc/hello-world:80
- ✔  Відповідь сервісу: Hello World from AsciiArtify!
+$ make demo-k3d
+==> Розгортаю whoami у k3d-asciiartify-k3d / namespace dev
+deployment.apps/whoami created
+service/whoami created
+deployment "whoami" successfully rolled out
+NAME                      READY   STATUS    NODE
+whoami-xxxxxxxxxx-aaaaa   1/1     Running   k3d-asciiartify-k3d-server-0
+whoami-xxxxxxxxxx-bbbbb   1/1     Running   k3d-asciiartify-k3d-agent-0
+whoami-xxxxxxxxxx-ccccc   1/1     Running   k3d-asciiartify-k3d-agent-1
+==> Port-forward localhost:8088 → svc/whoami:80
+ ✔  Відповідь сервісу: Hostname: whoami-xxxxxxxxxx-aaaaa
 ```
 
-Демо створює `Deployment` з 3 репліками образу `hashicorp/http-echo` (multi-arch) з `topologySpreadConstraints`, щоб репліки рознеслися по різних нодах, і `Service` типу ClusterIP. Той самий маніфест працює в усіх трьох кластерах (`make demo-kind`, `make demo-minikube`).
+Демо створює `Deployment` з 3 репліками образу `traefik/whoami:v1.12.0` з `topologySpreadConstraints`, щоб репліки рознеслися по різних нодах, і `Service` типу ClusterIP. Той самий маніфест працює в усіх трьох кластерах (`make demo-kind`, `make demo-minikube`).
 
 Аналогічно вручну:
 ```bash
-kubectl create deployment hello-world --image=hashicorp/http-echo:1.0 --replicas=3 -- /http-echo -text="Hello World"
-kubectl expose deployment hello-world --port=80 --target-port=5678
-kubectl port-forward svc/hello-world 8088:80 &
+kubectl create deployment whoami --image=traefik/whoami:v1.12.0 --replicas=3 -- --port=5678
+kubectl expose deployment whoami --port=80 --target-port=5678
+kubectl port-forward svc/whoami 8088:80 &
 curl localhost:8088
 ```
 
 ### Крок 4. Прибрати
 ```bash
-make delete-k3s
+make delete-k3d
 ```
 
 ---
@@ -264,7 +274,7 @@ make delete-k3s
 3. *Обмеження масштабування.* Будь-який з інструментів обмежений ресурсами однієї машини — це інструменти розробки, а не платформа для навантажувального тестування. Для тестів масштабування після PoC — керований кластер (EKS/GKE/AKS) або окремий k3s/RKE2-кластер.
 
 **Наступні кроки**
-1. Кожному розробнику виконати `make k3s && make demo-k3s` і порівняти з `make kind` / `make minikube` на своєму залізі.
+1. Кожному розробнику виконати `make k3d && make demo-k3d` і порівняти з `make kind` / `make minikube` на своєму залізі.
 2. Додати в GitHub Actions job з `kind` для e2e-тестів.
 3. Прогнати ті самі сценарії з `ENGINE=podman` на macOS-машині, щоб мати план Б без Docker Desktop.
 
