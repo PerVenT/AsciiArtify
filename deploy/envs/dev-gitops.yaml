@@ -1,7 +1,7 @@
 # Зовнішній dev-контур через ArgoCD (приклад 1:1 зі staging/prod; замініть домен під ваш dev-стенд)
 global:
-  baseDomain: dev.example.com
-  clusterIssuer: letsencrypt-staging
+  baseDomain: localtest.me
+  clusterIssuer: mesh
   internalClusterIssuer: mesh
   autheliaNamespace: authelia
   argocdNamespace: argocd
@@ -17,14 +17,14 @@ authelia:
   configMap:
     session:
       cookies:
-        - domain: dev.example.com
+        - domain: localtest.me
           subdomain: auth
-          default_redirection_url: https://app.dev.example.com
+          default_redirection_url: https://app.localtest.me
     access_control:
       rules:
-        - domain: auth.dev.example.com
+        - domain: auth.localtest.me
           policy: bypass
-        - domain: "*.dev.example.com"
+        - domain: "*.localtest.me"
           policy: one_factor
     identity_providers:
       oidc:
@@ -39,7 +39,7 @@ authelia:
             require_pkce: false
             claims_policy: argocd
             redirect_uris:
-              - https://argocd.dev.example.com/auth/callback
+              - https://argocd.localtest.me/auth/callback
             scopes:
               - openid
               - profile
@@ -53,13 +53,13 @@ authelia:
 
 argo-cd:
   global:
-    domain: argocd.dev.example.com
+    domain: argocd.localtest.me
   configs:
     cm:
-      url: https://argocd.dev.example.com
+      url: https://argocd.localtest.me
       oidc.config: |
         name: Authelia
-        issuer: https://auth.dev.example.com
+        issuer: https://auth.localtest.me
         clientID: argocd
         clientSecret: $oidc.argocd.clientSecret
         requestedScopes:

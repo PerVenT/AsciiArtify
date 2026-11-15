@@ -51,7 +51,7 @@ dev-local: helm-deps ## Локальний dev-контур без ArgoCD (cert-
 	kubectl wait --for=condition=Ready certificate/traefik-wildcard-tls -n traefik --timeout=60s
 	bash $(SCRIPTS)/authelia-secrets.sh
 	helm upgrade --install authelia deploy/platform/authelia --create-namespace --namespace $(AUTHELIA_NAMESPACE) --wait -f $(ENV_FILE)
-	helm upgrade --install demo deploy/demo --create-namespace --namespace demo --set "ingress.host=demo.$(DOMAIN)"
+	helm upgrade --install whoami deploy/whoami --create-namespace --namespace whoami --set "ingress.host=app.$(DOMAIN)"
 
 dev-gitops: dev-local ## Зовнішній dev-контур з ArgoCD
 	bash $(SCRIPTS)/render-argocd-oidc.sh

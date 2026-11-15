@@ -14,10 +14,10 @@ CA_PEM="$(kubectl get secret mesh-ca-public -n traefik -o jsonpath='{.data.tls\.
 argo-cd:
   global:
     domain: argocd.${DOMAIN}
-  hostAliases:
-    - ip: "${TRAEFIK_IP}"
-      hostnames:
-        - "auth.${DOMAIN}"
+    hostAliases:
+      - ip: "${TRAEFIK_IP}"
+        hostnames:
+          - "auth.${DOMAIN}"
   configs:
     cm:
       url: https://argocd.${DOMAIN}
