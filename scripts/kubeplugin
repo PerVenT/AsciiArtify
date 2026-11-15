@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# kubectl plugin to output Kubernetes resource usage (CPU and memory)
+# in the format: "Resource, Namespace, Name, CPU, Memory"
+
+set -euo pipefail
+
+PROG_NAME="$(basename "$0")"
+
+RESOURCE_ARG="pods"
+RESOURCE_KIND=""
+KUBECTL_RESOURCE=""
+NAMESPACE=""
+ALL_NAMESPACES=false
+SELECTOR=""
+SORT_BY=""
+CONTEXT=""
+NO_HEADER=false
+KUBECTL_GLOBAL_ARGS=()
+
+die() {
+  printf 'Error: %s\n' "$*" >&2
+  exit 1
+}
+
+warn() {
+  printf 'Warning: %s\n' "$*" >&2
+}
+
+usage() {
+  cat <<EOF
+Usage:
+  kubectl kubeplugin [RESOURCE] [NAMESPACE] [OPTIONS]
+  $PROG_NAME [RESOURCE] [NAMESPACE] [OPTIONS]
+
+Arguments:
+  RESOURCE                  Kubernetes resource type: pods (pod, po) or nodes (node, no).
+                            Default: pods
+  NAMESPACE                 Target namespace (used for pods when -n/-A are not set).
+
+Options:
+  -n, --namespace <ns>      Target namespace for pods (defaults to current context namespace)
+  -A, --all-namespaces      List pod metrics across all namespaces
+  -l, --selector <query>    Label selector to filter resources
+      --sort-by <field>     Sort metrics by 'cpu' or 'memory'
+      --context <name>      Kubeconfig context to use
+      --no-header           Omit the CSV header line
+  -h, --help                Show this help message
+
+Examples:
+  kubectl kubeplugin pods -n kube-system
+  kubectl kubeplugin pods kube-system
+  kubectl kubeplugin pods -A --sort-by=memory
+  kubectl kubeplugin nodes
+EOF
+}
+
+require_value() {
+  local opt="$1"
+  local remaining="$2"
+  [[ "$remaining" -ge 2 ]] || die "Option '$opt' requires a value"
+}
+
+parse_args() {
+  local -a positional=()
+
+  # Allow optional leading 'top' subcommand for compatibility
+  if [[ "${1:-}" == "top" ]]; then
+    shift
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -n|--namespace)
+        require_value "$1" "$#"
+        NAMESPACE="$2"
+        shift 2
+        ;;
+      --namespace=*)
+        NAMESPACE="${1#*=}"
+        [[ -n "$NAMESPACE" ]] || die "Option '--namespace' requires a non-empty value"
+        shift
+        ;;
+      -A|--all-namespaces)
+        ALL_NAMESPACES=true
+        shift
+        ;;
+      -l|--selector)
+        require_value "$1" "$#"
+        SELECTOR="$2"
+        shift 2
+        ;;
+      --selector=*)
+        SELECTOR="${1#*=}"
+        shift
+        ;;
+      --sort-by)
+        require_value "$1" "$#"
+        SORT_BY="$2"
+        shift 2
+        ;;
+      --sort-by=*)
+        SORT_BY="${1#*=}"
+        shift
+        ;;
+      --context)
+        require_value "$1" "$#"
+        CONTEXT="$2"
+        shift 2
+        ;;
+      --context=*)
+        CONTEXT="${1#*=}"
+        [[ -n "$CONTEXT" ]] || die "Option '--context' requires a non-empty value"
+        shift
+        ;;
+      --no-header|--no-headers)
+        NO_HEADER=true
+        shift
+        ;;
+      --)
+        shift
+        positional+=("$@")
+        break
+        ;;
+      -*)
+        die "Unknown option: $1 (use --help for usage)"
+        ;;
+      *)
+        positional+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  if [[ ${#positional[@]} -ge 1 ]]; then
+    RESOURCE_ARG="${positional[0]}"
+  fi
+  if [[ ${#positional[@]} -ge 2 ]]; then
+    if [[ -n "$NAMESPACE" ]]; then
+      die "Namespace specified both positionally ('${positional[1]}') and via flag ('$NAMESPACE')"
+    fi
+    NAMESPACE="${positional[1]}"
+  fi
+  if [[ ${#positional[@]} -gt 2 ]]; then
+    die "Too many positional arguments: ${positional[*]}"
+  fi
+}
+
+normalize_resource() {
+  local raw="${RESOURCE_ARG,,}"
+  case "$raw" in
+    po|pod|pods)
+      RESOURCE_KIND="pod"
+      KUBECTL_RESOURCE="pods"
+      ;;
+    no|node|nodes)
+      RESOURCE_KIND="node"
+      KUBECTL_RESOURCE="nodes"
+      ;;
+    *)
+      die "Unsupported resource type '$RESOURCE_ARG'. Supported types: pods, nodes"
+      ;;
+  esac
+}
+
+validate_options() {
+  command -v kubectl >/dev/null 2>&1 || die "kubectl not found in PATH"
+
+  if [[ -n "$CONTEXT" ]]; then
+    KUBECTL_GLOBAL_ARGS+=(--context "$CONTEXT")
+  fi
+
+  if [[ -n "$SORT_BY" && "$SORT_BY" != "cpu" && "$SORT_BY" != "memory" ]]; then
+    die "Invalid --sort-by value '$SORT_BY'. Allowed values: cpu, memory"
+  fi
+
+  if [[ "$RESOURCE_KIND" == "node" ]] && { [[ -n "$NAMESPACE" ]] || [[ "$ALL_NAMESPACES" == true ]]; }; then
+    warn "Nodes are cluster-scoped; ignoring namespace options"
+    NAMESPACE=""
+    ALL_NAMESPACES=false
+  fi
+}
+
+resolve_namespace() {
+  if [[ "$RESOURCE_KIND" != "pod" || "$ALL_NAMESPACES" == true || -n "$NAMESPACE" ]]; then
+    return 0
+  fi
+
+  NAMESPACE="$(kubectl "${KUBECTL_GLOBAL_ARGS[@]}" config view --minify --output 'jsonpath={..namespace}' 2>/dev/null || true)"
+  NAMESPACE="${NAMESPACE:-default}"
+}
+
+fetch_metrics() {
+  local -a cmd=(kubectl "${KUBECTL_GLOBAL_ARGS[@]}" top "$KUBECTL_RESOURCE" --no-headers)
+
+  if [[ "$RESOURCE_KIND" == "pod" ]]; then
+    if [[ "$ALL_NAMESPACES" == true ]]; then
+      cmd+=(-A)
+    else
+      cmd+=(-n "$NAMESPACE")
+    fi
+  fi
+
+  [[ -z "$SELECTOR" ]] || cmd+=(-l "$SELECTOR")
+  [[ -z "$SORT_BY" ]] || cmd+=(--sort-by="$SORT_BY")
+
+  "${cmd[@]}"
+}
+
+format_metrics() {
+  local raw_output="$1"
+  local line row_ns name cpu memory _cpu_pct _mem_pct _rest
+
+  if [[ "$NO_HEADER" == false ]]; then
+    printf 'Resource, Namespace, Name, CPU, Memory\n'
+  fi
+
+  [[ -n "$raw_output" ]] || return 0
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+
+    case "${RESOURCE_KIND}:${ALL_NAMESPACES}" in
+      pod:true)
+        read -r row_ns name cpu memory _rest <<< "$line"
+        ;;
+      pod:false)
+        row_ns="$NAMESPACE"
+        read -r name cpu memory _rest <<< "$line"
+        ;;
+      node:*)
+        row_ns="-"
+        read -r name cpu _cpu_pct memory _mem_pct _rest <<< "$line"
+        ;;
+    esac
+
+    printf '%s, %s, %s, %s, %s\n' "$RESOURCE_KIND" "$row_ns" "$name" "$cpu" "$memory"
+  done <<< "$raw_output"
+}
+
+main() {
+  parse_args "$@"
+  normalize_resource
+  validate_options
+  resolve_namespace
+
+  local metrics_output
+  metrics_output="$(fetch_metrics)"
+  format_metrics "$metrics_output"
+}
+
+main "$@"
