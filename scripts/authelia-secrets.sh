@@ -12,6 +12,7 @@ DIR="$ROOT/state/authelia"
 AUTHELIA_NS="${AUTHELIA_NAMESPACE:-authelia}"
 DOMAIN="${DOMAIN:-localtest.me}"
 AUTHELIA_IMAGE="${AUTHELIA_IMAGE:-ghcr.io/authelia/authelia:4.39.24}"
+AUTHELIA_USERS="${AUTHELIA_USERS:-admin dev qa pm user}"
 
 mkdir -p "$DIR"
 chmod 700 "$DIR"
@@ -36,28 +37,44 @@ if [ ! -s "$DIR/argocd_client_secret_hash" ]; then
     | grep -oE '\$pbkdf2[^[:space:]]+' | head -n1 | tr -d '\r\n' > "$DIR/argocd_client_secret_hash"
 fi
 
-if [ ! -s "$DIR/admin_password" ]; then
-  openssl rand -hex 12 | tr -d '\r\n' > "$DIR/admin_password"
-fi
-
-if [ ! -s "$DIR/admin_password_hash" ]; then
-  hash=$("$ENGINE" run --rm --entrypoint authelia "$AUTHELIA_IMAGE" \
-    crypto hash generate argon2 --password "$(cat "$DIR/admin_password")" \
-    | grep -oE '\$argon2id\$[^[:space:]]+' | head -n1)
-  [ -n "$hash" ] || die "authelia-secrets: не вдалося згенерувати argon2id-хеш"
-  printf '%s' "$hash" > "$DIR/admin_password_hash"
-fi
-
-cat > "$DIR/users_database.yml" <<EOF
-users:
-  admin:
-    displayname: "Dev Administrator"
-    password: "$(cat "$DIR/admin_password_hash")"
-    email: "admin@${DOMAIN}"
-    groups:
-      - admins
-      - dev
-EOF
+user_displayname() {
+  case "$1" in
+    admin) echo "Dev Administrator" ;;
+    dev)   echo "Developer" ;;
+    qa)    echo "QA Engineer" ;;
+    pm)    echo "Product Manager" ;;
+    *)     echo "$1" ;;
+  esac
+}
+user_groups() {
+  case "$1" in
+    admin) echo "admins dev" ;;
+    *)     echo "$1" ;;
+  esac
+}
+printf 'users:\n' > "$DIR/users_database.yml"
+for user in $AUTHELIA_USERS; do
+  if [ ! -s "$DIR/${user}_password" ]; then
+    openssl rand -hex 18 | tr -d '\r\n' > "$DIR/${user}_password"
+  fi
+  if [ ! -s "$DIR/${user}_password_hash" ]; then
+    hash=$("$ENGINE" run --rm --entrypoint authelia "$AUTHELIA_IMAGE" \
+      crypto hash generate argon2 --password "$(cat "$DIR/${user}_password")" \
+      | grep -oE '\$argon2id\$[^[:space:]]+' | head -n1)
+    [ -n "$hash" ] || die "authelia-secrets: не вдалося згенерувати argon2id-хеш для $user"
+    printf '%s' "$hash" > "$DIR/${user}_password_hash"
+  fi
+  {
+    printf '  %s:\n' "$user"
+    printf '    displayname: "%s"\n' "$(user_displayname "$user")"
+    printf '    password: "%s"\n' "$(cat "$DIR/${user}_password_hash")"
+    printf '    email: "%s@%s"\n' "$user" "$DOMAIN"
+    printf '    groups:\n'
+    for grp in $(user_groups "$user"); do
+      printf '      - %s\n' "$grp"
+    done
+  } >> "$DIR/users_database.yml"
+done
 
 cat > "$DIR/server-tls.yml" <<'EOF'
 server:
@@ -92,4 +109,4 @@ kubectl -n "$AUTHELIA_NS" create secret generic authelia-oidc \
   --from-file=argocd_client_secret_hash="$DIR/argocd_client_secret_hash" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-ok "authelia-secrets: готово (логін: admin, пароль у $DIR/admin_password)"
+ok "authelia-secrets: готово (користувачі: $AUTHELIA_USERS, паролі у $DIR/*_password)"

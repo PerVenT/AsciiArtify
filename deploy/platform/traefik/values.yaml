@@ -25,9 +25,27 @@ traefik:
         middlewares:
           - traefik-authelia-forward-auth@kubernetescrd
 
+  gateway:
+    enabled: true
+    listeners:
+      web:
+        port: 8000
+        protocol: HTTP
+        namespacePolicy:
+          from: All
+      websecure:
+        port: 8443
+        protocol: HTTPS
+        namespacePolicy:
+          from: All
+        certificateRefs:
+          - name: traefik-wildcard-tls
+          
   providers:
     kubernetesCRD:
       enabled: true
       allowCrossNamespace: true
     kubernetesIngress:
+      enabled: true    
+    kubernetesGateway:
       enabled: true

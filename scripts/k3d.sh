@@ -51,12 +51,12 @@ up() {
 
   # shellcheck disable=SC2046  # імена нод без пробілів; без mapfile — сумісно з bash 3.2 (macOS)
   limit_node_containers $(k3d node list | awk -v c="$K3D_CLUSTER" 'NR>1 && $3==c && ($2=="server" || $2=="agent") {print $1}')
-
+  # Встановити Gateway API CRDs у кластер
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
   kubectl config use-context "$CONTEXT" >/dev/null
   wait_nodes_ready
   set_default_namespace
   show_summary "k3d-${K3D_CLUSTER}-"
-  echo "Ingress (Traefik) доступний на http://localhost:80"
 }
 
 down()   { ensure_tool k3d; use_podman_socket; k3d cluster delete "$K3D_CLUSTER"; }

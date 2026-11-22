@@ -31,7 +31,8 @@ up() {
   # kind не має власних параметрів CPU/RAM для нод — обмежуємо контейнери засобами рушія
   # shellcheck disable=SC2046  # імена нод без пробілів; без mapfile — сумісно з bash 3.2 (macOS)
   limit_node_containers $(kind get nodes --name "$KIND_CLUSTER")
-
+  # Встановити Gateway API CRDs у кластер
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
   kubectl config use-context "$CONTEXT" >/dev/null
   wait_nodes_ready
   set_default_namespace

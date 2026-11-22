@@ -26,6 +26,8 @@ up() {
     --addons metrics-server \
     ${extra[@]+"${extra[@]}"}
 
+  # Встановити Gateway API CRDs у кластер
+  kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
   kubectl config use-context "$PROFILE" >/dev/null
   wait_nodes_ready
   set_default_namespace
